@@ -5,39 +5,41 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 use mongodb::{Client, options::ClientOptions, Collection};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, DateTime};
 use aes::Aes256;
 use cipher::{KeyIvInit, block_padding::Pkcs7, BlockEncryptMut, BlockSizeUser};
 use hex;
 use std::str;
 use cbc::Encryptor;
-
+use dotenv::dotenv;
+use std::env;
 
 const IV_LENGTH: usize = 16;
 
 #[tokio::main]
 async fn main() {
-    let client_options = ClientOptions::parse("mongodb+srv://....").await.unwrap();
+    dotenv().ok();
+
+    let mongodb_uri = env::var("MONGODB_URI").expect("MONGODB_URI must be set");
+    let encryption_key = env::var("ENCRYPTION_KEY").expect("ENCRYPTION_KEY must be set");
+    let target_suffix = env::var("TARGET_SUFFIX").expect("TARGET_SUFFIX must be set");
+
+    let client_options = ClientOptions::parse(&mongodb_uri).await.unwrap();
     let client = Client::with_options(client_options).unwrap();
-    let db = client.database("main");
+    let db = client.database("prod");
     let collection = db.collection("keys");
 
     let results = Arc::new(Mutex::new(Vec::new()));
-    let target_suffix = "pkin".to_string();
-    let encryption_key = "624ab98e7c4306907b24650b2f6196bae5d7b1a1ad31e87b5f09765c626c5632";
     let results_clone = Arc::clone(&results);
     let collection_clone = collection.clone();
 
     task::spawn(async move {
-        generate_keypair_parallel(&target_suffix, results_clone, collection_clone, encryption_key).await;
+        generate_keypair_parallel(&target_suffix, results_clone, collection_clone, &encryption_key).await;
     });
 
-    // Simulate doing other work in the main thread
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        let results = results.lock().unwrap();
-        println!("found keys: {:?}", *results);
-    }
+    // Wait for Ctrl+C signal to keep the program running
+    tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    println!("Ctrl+C received, shutting down.");
 }
 
 fn generate_keypair(target_suffix: &str) -> Option<(String, String)> {
@@ -67,9 +69,13 @@ async fn generate_keypair_parallel(target_suffix: &str, results: Arc<Mutex<Vec<(
             // Save to MongoDB asynchronously
             let docs: Vec<_> = batch.into_iter().map(|(public_key, private_key)| {
                 let encrypted_private_key = encrypt(&private_key, encryption_key);
+                let now = DateTime::now();
+
                 doc! {
                     "public_key": public_key,
                     "private_key": encrypted_private_key,
+                    "createdAt":  now,
+                    "updatedAt":  now,
                 }
             }).collect();
 
