@@ -19,7 +19,7 @@ const IV_LENGTH: usize = 16;
 async fn main() {
     let client_options = ClientOptions::parse("mongodb+srv://....").await.unwrap();
     let client = Client::with_options(client_options).unwrap();
-    let db = client.database("keygen");
+    let db = client.database("main");
     let collection = db.collection("keys");
 
     let results = Arc::new(Mutex::new(Vec::new()));
